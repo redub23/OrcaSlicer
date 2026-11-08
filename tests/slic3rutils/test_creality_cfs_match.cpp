@@ -307,8 +307,9 @@ TEST_CASE("The K2 CFS box response keeps a loaded spool the printer cannot name"
              "percent":100,"state":0,"selected":0,"editStatus":0}]}]}})";
     std::vector<CrealityPrintAgent::CFSSlot> slots;
     int                                      box_count = 0;
+    bool                                     external_present = false;
     std::string                              error;
-    REQUIRE(CrealityPrintAgent::parse_cfs_response(response, slots, box_count, error));
+    REQUIRE(CrealityPrintAgent::parse_cfs_response(response, slots, box_count, external_present, error));
     CHECK(box_count == 1);
     REQUIRE(slots.size() == 3);
     CHECK(slots[0].slot_id == 0);
@@ -331,8 +332,9 @@ TEST_CASE("The K2 CFS box response skips a slot that reports neither material no
             {"id":1,"vendor":"Creality","type":"PETG","name":"","color":"#0ff1e1e","state":1}]}]}})";
     std::vector<CrealityPrintAgent::CFSSlot> slots;
     int                                      box_count = 0;
+    bool                                     external_present = false;
     std::string                              error;
-    REQUIRE(CrealityPrintAgent::parse_cfs_response(response, slots, box_count, error));
+    REQUIRE(CrealityPrintAgent::parse_cfs_response(response, slots, box_count, external_present, error));
     CHECK(box_count == 1);
     REQUIRE(slots.size() == 1);
     CHECK(slots[0].slot_id == 1);
@@ -346,8 +348,9 @@ TEST_CASE("The K2 CFS box response reads a null or mistyped field as blank", "[C
             {"id":0,"vendor":null,"type":"PLA","name":7,"color":"#0ffffff","state":1}]}]}})";
     std::vector<CrealityPrintAgent::CFSSlot> slots;
     int                                      box_count = 0;
+    bool                                     external_present = false;
     std::string                              error;
-    REQUIRE(CrealityPrintAgent::parse_cfs_response(response, slots, box_count, error));
+    REQUIRE(CrealityPrintAgent::parse_cfs_response(response, slots, box_count, external_present, error));
     REQUIRE(slots.size() == 1);
     CHECK(slots[0].vendor.empty());
     CHECK(slots[0].brand_name.empty());
