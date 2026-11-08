@@ -1,0 +1,116 @@
+name: Merge official Orca (one-time)
+
+# One-time: merge official OrcaSlicer main (pinned to the commit tested on 2026-11-07)
+# into this fork's main, which should first be synced to Jacob10383/OrcaSlicer main.
+# Resolves the known conflicts, keeps this fork's workflow files, then starts a build.
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge official OrcaSlicer and resolve conflicts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          OFFICIAL_SHA=7906d7e02aef5d86cadb59f05e4cf930b1415093
+          git remote add official https://github.com/OrcaSlicer/OrcaSlicer.git
+          git fetch official main
+          if git merge-base --is-ancestor "$OFFICIAL_SHA" HEAD; then
+            echo "main already contains that official commit; nothing to do."
+            exit 0
+          fi
+
+          before="$(git rev-parse HEAD)"
+          git merge --no-ff --no-commit "$OFFICIAL_SHA" || true
+
+          python3 - <<'PY'
+          """Resolve the known conflicts when merging official OrcaSlicer main into Jacob's fork."""
+          import re, sys
+
+          def fix(path, pairs):
+              s = open(path).read()
+              for ours, theirs, result in pairs:
+                  pat = re.compile(r"<<<<<<< [^\n]*\n" + re.escape(ours) + r"=======\n" + re.escape(theirs) + r">>>>>>> [^\n]*\n")
+                  s, n = pat.subn(lambda m: result, s)
+                  if n != 1:
+                      sys.exit(f"{path}: expected conflict not found")
+              if "<<<<<<<" in s or ">>>>>>>" in s:
+                  sys.exit(f"{path}: unexpected extra conflict")
+              open(path, "w").write(s)
+
+          fix("version.inc", [(
+              'set(SoftFever_VERSION "2.5.0-Jacobean")\n',
+              'set(SoftFever_VERSION "2.6.0-dev")\n',
+              'set(SoftFever_VERSION "2.6.0-dev")\n')])
+
+          fix("src/slic3r/GUI/PrintHostDialogs.hpp", [(
+              "class wxPanel;\n", "class wxStaticBox;\n", "class wxPanel;\nclass wxStaticBox;\n")])
+
+          fix("src/slic3r/Utils/CrealityPrintAgent.cpp", [
+           ('        const int box_st   = box.value("state", 0);\n'
+            '        const int box_type = box.value("type",  0);\n'
+            '        const bool is_external = box_type == 1 || box.value("external", false);\n'
+            '        if (box_st != 1) continue;\n'
+            '        if (box_type != 0 && !is_external) continue;\n',
+            '        const int box_st   = safe_json_int(box, "state");\n'
+            '        const int box_type = safe_json_int(box, "type");\n'
+            '        if (box_st != 1)   continue; // inactive boxes\n'
+            '        if (box_type != 0) continue; // non-CFS (external spool holder, handled separately by upload dialog)\n',
+            '        const int box_st   = safe_json_int(box, "state");\n'
+            '        const int box_type = safe_json_int(box, "type");\n'
+            '        const bool is_external = box_type == 1 || box.value("external", false);\n'
+            '        if (box_st != 1) continue; // inactive boxes\n'
+            '        if (box_type != 0 && !is_external) continue;\n'),
+           ('    if (!parse_cfs_response(response, slots, box_count, external_present, parse_err)) {\n',
+            '    if (!parse_cfs_response(info.boxes_json, slots, box_count, parse_err)) {\n',
+            '    if (!parse_cfs_response(info.boxes_json, slots, box_count, external_present, parse_err)) {\n'),
+          ])
+          print("resolved")
+
+          # Semantic conflict: upstream's new no-CFS branch uses dev_id, which Jacob's signature leaves unnamed.
+          p = "src/slic3r/Utils/CrealityPrintAgent.cpp"
+          s = open(p).read()
+          old = ('reports no CFS connected, deferring to base agent";\n'
+                 '        return MoonrakerPrinterAgent::fetch_filament_info(std::move(dev_id));')
+          if old in s:
+              s = s.replace(old, 'reports no CFS connected, deferring to base agent";\n        return fetch_standard_filament_info();')
+              open(p, "w").write(s)
+              print("fixed no_cfs fallback")
+          PY
+
+          # Keep this fork's README and workflow files.
+          git checkout "$before" -- README.md
+          git rm -r -q -f --ignore-unmatch .github/workflows
+          git restore --source="$before" --staged --worktree -- .github/workflows
+          git add -A
+
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            echo "::error::Unresolved conflicts remain:"
+            git diff --name-only --diff-filter=U
+            git merge --abort
+            exit 1
+          fi
+
+          git commit -m "Merge official OrcaSlicer main ($OFFICIAL_SHA) into Jacob's fork" \
+            -m "Resolved conflicts in version.inc, PrintHostDialogs.hpp and CrealityPrintAgent.cpp; kept fork README and workflows." \
+            -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+          Claude-Session: https://claude.ai/code/session_01JCVwm389qLcXUaEijzimkp"
+          git push origin HEAD:main
+          gh workflow run build_all.yml --repo "$GITHUB_REPOSITORY" --ref main
